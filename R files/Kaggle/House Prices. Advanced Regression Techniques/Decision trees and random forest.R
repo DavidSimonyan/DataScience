@@ -1,6 +1,5 @@
 # load in packages we'll use
 library(readr)
-library(tidyverse) # utility functions
 library(rpart) # for regression trees
 library(randomForest) # for random forests
 
@@ -62,3 +61,23 @@ fitRandomForest <- randomForest(Price ~ Rooms + Bathroom + Landsize + BuildingAr
                                 , data = splitData$train)
 
 mae(model = fitRandomForest, data = splitData$test)
+
+
+# submitting our results to Kaggle
+train <- read_csv('input/house_prices_train.csv')
+test <- read_csv('input/house_prices_test.csv')
+
+summary(train)
+summary(test)
+
+
+model <- randomForest(train$SalePrice ~ LotArea + OverallQual + YearBuilt + TotRmsAbvGrd, data = train)
+
+predicted_prices <- predict(model, newdata = test)
+head(predicted_prices)
+
+library(tibble)
+
+my_submission <- data_frame('Id' = as.integer(test$Id), 'SalePrice' = predicted_prices)
+
+write_csv(my_submission, 'submission.csv')
