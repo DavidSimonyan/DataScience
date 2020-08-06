@@ -39,15 +39,15 @@ def LoadCV2Image(image_path):
     # cv2 load images as BGR, convert it to RGB
     image = cv2.imread(str(image_path))
 
-    width, height, channels = image.shape
+    _, _, channels = image.shape
 
     if image is None:
         return None
 
-    image = cv2.resize(image, (width, height), interpolation=cv2.INTER_CUBIC)
+    image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_CUBIC)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-    return image, width, height, channels
+    return image, IMAGE_WIDTH, IMAGE_HEIGHT, channels
 
 ###################################################################################################
 def GenerateTFRecordsFromCSV(images_data_file_path, desctination_data_path, images_per_record_file = 200, max_number_of_record_files = -1):
@@ -122,7 +122,7 @@ def GetDatasetFromTFRecordsList(filenames, batch_size, repeat):
     return dataset
 
 ###################################################################################################
-def GetDatasetFromTFRecordsDirectory(data_path, batch_size, repeat = 1):
+def GetDatasetFromTFRecordsDirectory(data_path, batch_size, repeat = None):
     records_list = []
     records_list += (sorted(data_path.glob('*.tfrecords')))
 
@@ -145,26 +145,24 @@ def GetImageDataFromExample(example):
 ###################################################################################################
 def build_model():
     base_model = tf.keras.applications\
-        .VGG19(\
-        #.ResNet101(\
+        .ResNet101(\
             weights='imagenet', include_top=False, \
             input_shape=(IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS), classes = CLASSES)
 
     input = tf.keras.Input(shape=(IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS))
-    output = tf.keras.layers.experimental.preprocessing.Rescaling(1./255)(input)
+    output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
     output = base_model(output)
     output = tf.keras.layers.Flatten()(output)
     output = tf.keras.layers.Dense(32, activation='relu')(output)
     output = tf.keras.layers.Dense(16, activation='relu')(output)
-    #output = tf.keras.layers.Dense(1, activation = 'sigmoid')(output)
     output = tf.keras.layers.Dense(CLASSES, activation='softmax')(output)
 
-    #output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
-    """output = tf.keras.layers.Conv2D(filters=32, kernel_size=5, padding='same', activation='relu')(output)
+    """output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
+    output = tf.keras.layers.Conv2D(filters=32, kernel_size=5, padding='same', activation='relu')(output)
     output = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='same')(output)
     output = tf.keras.layers.Conv2D(filters=32, kernel_size=5, padding='same', activation='relu')(output)
-    output = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='same')(output)"""
-    """output = tf.keras.layers.Flatten()(output)
+    output = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='same')(output)
+    output = tf.keras.layers.Flatten()(output)
     output = tf.keras.layers.Dense(128, activation='relu')(output)
     output = tf.keras.layers.Dense(64, activation='relu')(output)
     output = tf.keras.layers.Dense(32, activation='relu')(output)
@@ -214,7 +212,6 @@ if __name__ == '__main__':
     GenerateCSVFromImageFolder(TEST_PATH, TEST_CSV_PATH)
     GenerateTFRecordsFromCSV(TRAIN_CSV_PATH, TRAIN_TFRECORDS_PATH)
     GenerateTFRecordsFromCSV(TEST_CSV_PATH, TEST_TFRECORDS_PATH)
-
     train_df = GetDatasetFromTFRecordsDirectory(TRAIN_TFRECORDS_PATH, 32)
     validation_df = GetDatasetFromTFRecordsDirectory(TEST_TFRECORDS_PATH, 32)
 
@@ -222,9 +219,7 @@ if __name__ == '__main__':
     model.fit( train_df,\
                epochs = 10,\
                verbose = 1,\
-               #steps_per_epoch = 10,\
+               steps_per_epoch = 10,\
                validation_data = validation_df,\
-               #validation_steps = 10\
+               validation_steps = 10\
                )
-
-    model.evaluate(validation_df)
