@@ -106,12 +106,12 @@ def ParseExample(record):
 
     class_id = tf.cast(parsed['class_id'], tf.int64)
 
-    return tf.reshape(image, [IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS]), class_id
+    return tf.reshape(image, [IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS]), tf.one_hot(class_id - 1, CLASSES)
 
 ###################################################################################################
 def GetDatasetFromTFRecordsList(filenames, batch_size, repeat):
     dataset = tf.data.TFRecordDataset(filenames=filenames, num_parallel_reads=12)
-    dataset = dataset.shuffle(1024)
+    dataset = dataset.shuffle(256)
 
     dataset = dataset.repeat(repeat)
 
@@ -153,8 +153,8 @@ def build_model():
     output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
     output = base_model(output)
     output = tf.keras.layers.Flatten()(output)
-    output = tf.keras.layers.Dense(32, activation='relu')(output)
-    output = tf.keras.layers.Dense(16, activation='relu')(output)
+    output = tf.keras.layers.Dense(256, activation='relu')(output)
+    output = tf.keras.layers.Dense(128, activation='relu')(output)
     output = tf.keras.layers.Dense(CLASSES, activation='softmax')(output)
 
     """output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
@@ -172,10 +172,11 @@ def build_model():
     opt = tf.keras.optimizers.Adam(lr = 0.001)
 
     #model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
-    model.compile(loss = 'sparse_categorical_crossentropy', optimizer = opt, metrics=['accuracy'])
+    model.compile(loss = 'categorical_crossentropy', optimizer = opt, metrics=['categorical_accuracy'])
 
     return model
 
+###################################################################################################
 def GenerateCSVFromImageFolder(images_path, csv_path):
     images_df = pd.DataFrame()
     images_df['image_path'] = pd.Series(images_path.glob("**/*.jpg")).apply(lambda x: str(x))
@@ -183,6 +184,43 @@ def GenerateCSVFromImageFolder(images_path, csv_path):
     images_df['class_id'] = images_df['class_name'].astype('category').cat.codes + 1
     images_df = images_df.sample(frac = 1, random_state = 42).reset_index(drop = True)
     images_df.to_csv(csv_path, index=False)
+
+###################################################################################################
+def ShowOrSaveExampleAsPlot(example, filename = ""):
+    images_tensor = example[0]
+    labels_tensor = example[1]
+
+    plt.figure(figsize=(16, 9))
+
+    images_count = len(images_tensor)
+    size = np.ceil(np.sqrt(images_count))
+
+    for index in range(images_count):
+        ax = plt.subplot(size, size, index + 1)
+        image = images_tensor[index].numpy().reshape(IMAGE_WIDTH, IMAGE_HEIGHT, 3)
+        plt.imshow((image).astype(np.uint8))
+        plt.title(labels_tensor[index].numpy())
+        plt.axis('off')
+
+    if len(filename) > 0:
+        plt.savefig(filename)
+        plt.close()
+    else:
+        plt.show()
+
+###################################################################################################
+def ShowOrSaveTFRecordAsPlot(source_path, destination_path = "", images_per_plot = 32, max_plots_number = -1):
+    # repeat should be turned off when showing or saving plots
+    train_df = GetDatasetFromTFRecordsDirectory(source_path, 32)
+    filename = source_path.name
+    batch_number = 0
+
+    for example in train_df:
+        ShowOrSaveExampleAsPlot(example, '{}/{}{}.png'.format(destination_path, filename, batch_number))
+        batch_number += 1
+
+        if max_plots_number > 0 and batch_number >= max_plots_number:
+            break
 
 if __name__ == '__main__':
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -212,6 +250,9 @@ if __name__ == '__main__':
     GenerateCSVFromImageFolder(TEST_PATH, TEST_CSV_PATH)
     GenerateTFRecordsFromCSV(TRAIN_CSV_PATH, TRAIN_TFRECORDS_PATH)
     GenerateTFRecordsFromCSV(TEST_CSV_PATH, TEST_TFRECORDS_PATH)
+
+    #ShowOrSaveTFRecordAsPlot(TRAIN_TFRECORDS_PATH)
+
     train_df = GetDatasetFromTFRecordsDirectory(TRAIN_TFRECORDS_PATH, 32)
     validation_df = GetDatasetFromTFRecordsDirectory(TEST_TFRECORDS_PATH, 32)
 
@@ -219,7 +260,7 @@ if __name__ == '__main__':
     model.fit( train_df,\
                epochs = 10,\
                verbose = 1,\
-               steps_per_epoch = 10,\
+               steps_per_epoch = 100,\
                validation_data = validation_df,\
-               validation_steps = 10\
+               validation_steps = 100\
                )
