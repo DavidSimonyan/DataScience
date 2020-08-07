@@ -106,7 +106,7 @@ def ParseExample(record):
 
     class_id = tf.cast(parsed['class_id'], tf.int64)
 
-    return tf.reshape(image, [IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS]), tf.one_hot(class_id - 1, CLASSES)
+    return tf.reshape(image, [IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS]), class_id
 
 ###################################################################################################
 def GetDatasetFromTFRecordsList(filenames, batch_size, repeat):
@@ -172,7 +172,7 @@ def build_model():
     opt = tf.keras.optimizers.Adam(lr = 0.001)
 
     #model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
-    model.compile(loss = 'categorical_crossentropy', optimizer = opt, metrics=['categorical_accuracy'])
+    model.compile(loss = 'sparse_categorical_crossentropy', optimizer = opt, metrics=['sparse_categorical_accuracy'])
 
     return model
 
@@ -181,7 +181,7 @@ def GenerateCSVFromImageFolder(images_path, csv_path):
     images_df = pd.DataFrame()
     images_df['image_path'] = pd.Series(images_path.glob("**/*.jpg")).apply(lambda x: str(x))
     images_df['class_name'] = images_df['image_path'].apply(lambda x: x.split('\\')[-2])
-    images_df['class_id'] = images_df['class_name'].astype('category').cat.codes + 1
+    images_df['class_id'] = images_df['class_name'].astype('category').cat.codes
     images_df = images_df.sample(frac = 1, random_state = 42).reset_index(drop = True)
     images_df.to_csv(csv_path, index=False)
 
