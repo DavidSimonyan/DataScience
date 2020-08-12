@@ -7,11 +7,6 @@ from pathlib import Path
 import datetime
 import sys
 
-IMAGE_WIDTH = 150
-IMAGE_HEIGHT = 150
-CHANNELS = 3
-CLASSES = 6
-
 ###################################################################################################
 def GetBytesFeature(value):
     """Returns a bytes_list from a string / byte."""
@@ -35,22 +30,20 @@ def GetIntFeature(value):
 
 ###################################################################################################
 def LoadCV2Image(image_path):
-    # read an image and resize to (IMAGE_WIDTH, IMAGE_HEIGHT)
     # cv2 load images as BGR, convert it to RGB
     image = cv2.imread(str(image_path))
 
-    _, _, channels = image.shape
+    height, width, channels = image.shape
 
     if image is None:
         return None
 
-    image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_CUBIC)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-    return image, IMAGE_WIDTH, IMAGE_HEIGHT, channels
+    return image, width, height, channels
 
 ###################################################################################################
-def GenerateTFRecordsFromCSV(images_data_file_path, desctination_data_path, images_per_record_file = 200, max_number_of_record_files = -1):
+def GenerateTFRecordsFromCSV(images_data_file_path, desctination_data_path, image_size, images_per_record_file = 200, max_number_of_record_files = -1):
     Path(desctination_data_path).mkdir(parents=True, exist_ok=True)
 
     # image_path, class_name, class_id
@@ -66,16 +59,23 @@ def GenerateTFRecordsFromCSV(images_data_file_path, desctination_data_path, imag
             tf_record_file_index += 1
 
         image_path = row_data['image_path']
-        image_data, image_width, image_height, image_channels = LoadCV2Image(image_path)
+        image, image_width, image_height, image_channels = LoadCV2Image(image_path)
+
+        if image_width != image_size[0] or image_height != image_size[1]:
+            image = cv2.resize(image, image_size, interpolation=cv2.INTER_CUBIC)
+
         class_id = row_data['class_id']
 
-        if image_data is None:
+        if image is None:
             print('Empty image: {}'.format(image_path))
             continue
 
         features =\
                 {
-                'image_data': GetBytesFeature(image_data.tobytes()),
+                'image_data': GetBytesFeature(image.tobytes()),
+                'image_width': GetIntFeature(image_size[0]),
+                'image_height': GetIntFeature(image_size[1]),
+                'image_channels': GetIntFeature(image_channels),
                 'class_id': GetIntFeature(class_id),
                 }
 
@@ -97,6 +97,9 @@ def ParseExample(record):
     features =\
         {
         'image_data': tf.io.FixedLenFeature([], tf.string),
+        'image_width': tf.io.FixedLenFeature([], tf.int64),
+        'image_height': tf.io.FixedLenFeature([], tf.int64),
+        'image_channels': tf.io.FixedLenFeature([], tf.int64),
         'class_id': tf.io.FixedLenFeature([], tf.int64),
         }
 
@@ -104,9 +107,12 @@ def ParseExample(record):
     image = tf.io.decode_raw(parsed['image_data'], tf.uint8)
     image = tf.cast(image, tf.float32)
 
+    image_width = tf.cast(parsed['image_width'], tf.int64)
+    image_height = tf.cast(parsed['image_height'], tf.int64)
+    image_channels = tf.cast(parsed['image_channels'], tf.int64)
     class_id = tf.cast(parsed['class_id'], tf.int64)
 
-    return tf.reshape(image, [IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS]), class_id
+    return tf.reshape(image, [image_width, image_height, image_channels]), class_id
 
 ###################################################################################################
 def GetDatasetFromTFRecordsList(filenames, batch_size, repeat):
@@ -143,19 +149,19 @@ def GetImageDataFromExample(example):
     return image_numpy, class_id
 
 ###################################################################################################
-def build_model():
+def build_model(input_shape, num_classes):
     base_model = tf.keras.applications\
         .ResNet101(\
             weights='imagenet', include_top=False, \
-            input_shape=(IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS), classes = CLASSES)
+            input_shape=(input_shape[0], input_shape[1], input_shape[2]), classes = num_classes)
 
-    input = tf.keras.Input(shape=(IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS))
+    input = tf.keras.Input(shape=(input_shape[0], input_shape[1], input_shape[2]))
     output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
     output = base_model(output)
     output = tf.keras.layers.Flatten()(output)
     output = tf.keras.layers.Dense(256, activation='relu')(output)
     output = tf.keras.layers.Dense(128, activation='relu')(output)
-    output = tf.keras.layers.Dense(CLASSES, activation='softmax')(output)
+    output = tf.keras.layers.Dense(num_classes, activation='softmax')(output)
 
     """output = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255)(input)
     output = tf.keras.layers.Conv2D(filters=32, kernel_size=5, padding='same', activation='relu')(output)
@@ -185,8 +191,10 @@ def GenerateCSVFromImageFolder(images_path, csv_path):
     images_df = images_df.sample(frac = 1, random_state = 42).reset_index(drop = True)
     images_df.to_csv(csv_path, index=False)
 
+    return images_df['class_id'].nunique()
+
 ###################################################################################################
-def ShowOrSaveExampleAsPlot(example, filename = ""):
+def ShowOrSaveExampleAsPlot(example, filename = "", image_size = (224, 224)):
     images_tensor = example[0]
     labels_tensor = example[1]
 
@@ -197,7 +205,7 @@ def ShowOrSaveExampleAsPlot(example, filename = ""):
 
     for index in range(images_count):
         ax = plt.subplot(size, size, index + 1)
-        image = images_tensor[index].numpy().reshape(IMAGE_WIDTH, IMAGE_HEIGHT, 3)
+        image = images_tensor[index].numpy().reshape(image_size[0], image_size[1], 3)
         plt.imshow((image).astype(np.uint8))
         plt.title(labels_tensor[index].numpy())
         plt.axis('off')
@@ -246,21 +254,25 @@ if __name__ == '__main__':
     TRAIN_TFRECORDS_PATH = DATA_PATH / 'TFRecords/train'
     TEST_TFRECORDS_PATH = DATA_PATH / 'TFRecords/test'
 
-    GenerateCSVFromImageFolder(TRAIN_PATH, TRAIN_CSV_PATH)
-    GenerateCSVFromImageFolder(TEST_PATH, TEST_CSV_PATH)
-    GenerateTFRecordsFromCSV(TRAIN_CSV_PATH, TRAIN_TFRECORDS_PATH)
-    GenerateTFRecordsFromCSV(TEST_CSV_PATH, TEST_TFRECORDS_PATH)
+    IMAGE_WIDTH = 150
+    IMAGE_HEIGHT = 150
+    CHANNELS = 3
+
+    num_train_classes = GenerateCSVFromImageFolder(TRAIN_PATH, TRAIN_CSV_PATH)
+    num_test_classes = GenerateCSVFromImageFolder(TEST_PATH, TEST_CSV_PATH)
+    #GenerateTFRecordsFromCSV(TRAIN_CSV_PATH, TRAIN_TFRECORDS_PATH, (IMAGE_WIDTH, IMAGE_HEIGHT))
+    #GenerateTFRecordsFromCSV(TEST_CSV_PATH, TEST_TFRECORDS_PATH, (IMAGE_WIDTH, IMAGE_HEIGHT))
 
     #ShowOrSaveTFRecordAsPlot(TRAIN_TFRECORDS_PATH)
 
     train_df = GetDatasetFromTFRecordsDirectory(TRAIN_TFRECORDS_PATH, 32)
     validation_df = GetDatasetFromTFRecordsDirectory(TEST_TFRECORDS_PATH, 32)
 
-    model = build_model()
+    model = build_model((IMAGE_WIDTH, IMAGE_HEIGHT, CHANNELS), max(num_train_classes, num_test_classes))
     model.fit( train_df,\
                epochs = 10,\
                verbose = 1,\
-               steps_per_epoch = 100,\
+               steps_per_epoch = 10,\
                validation_data = validation_df,\
-               validation_steps = 100\
+               validation_steps = 10\
                )
